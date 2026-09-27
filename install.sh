@@ -91,7 +91,15 @@ install_web_panel() {
     CURRENT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
     if [ -f "${CURRENT_DIR}/artisan" ]; then
+        echo -e "${BLUE}Menyalin file project dari direktori saat ini...${NC}"
         cp -ru "${CURRENT_DIR}/." "${INSTALL_DIR}/"
+    else
+        echo -e "${BLUE}Mengunduh source code dari GitHub (https://github.com/ynzynnn/vpn-store.git)...${NC}"
+        if [ -d "${INSTALL_DIR}/.git" ]; then
+            cd "${INSTALL_DIR}" && git pull origin main || true
+        else
+            git clone https://github.com/ynzynnn/vpn-store.git "${INSTALL_DIR}"
+        fi
     fi
 
     cd "${INSTALL_DIR}"
