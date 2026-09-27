@@ -73,7 +73,7 @@ install_web_panel() {
     apt-get install -y -qq nginx \
         php8.3-cli php8.3-fpm php8.3-common php8.3-mysql php8.3-sqlite3 \
         php8.3-curl php8.3-mbstring php8.3-xml php8.3-zip php8.3-bcmath \
-        php8.3-intl php8.3-sodium
+        php8.3-intl
 
     echo -e "${GREEN}[3/8] Memasang Composer...${NC}"
     if ! command -v composer &> /dev/null; then

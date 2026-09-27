@@ -63,7 +63,7 @@ apt-get update -qq
 apt-get install -y -qq curl wget git unzip ufw software-properties-common ca-certificates lsb-release
 
 # 3. Install PHP 8.3 & Ekstensi
-echo -e "${GREEN}[2/7] Menginstall Nginx, PHP 8.3 & Ekstensi pendukung...${NC}"
+echo -e "${GREEN}[2/8] Menginstall Nginx, PHP 8.3 & Ekstensi pendukung...${NC}"
 OS_NAME=$(lsb_release -is | tr '[:upper:]' '[:lower:]')
 
 if [ "$OS_NAME" = "ubuntu" ]; then
@@ -78,16 +78,16 @@ fi
 apt-get install -y -qq nginx \
     php8.3-cli php8.3-fpm php8.3-common php8.3-mysql php8.3-sqlite3 \
     php8.3-curl php8.3-mbstring php8.3-xml php8.3-zip php8.3-bcmath \
-    php8.3-intl php8.3-sodium
+    php8.3-intl
 
 # 4. Install Composer
-echo -e "${GREEN}[3/7] Memasang Composer...${NC}"
+echo -e "${GREEN}[3/8] Memasang Composer...${NC}"
 if ! command -v composer &> /dev/null; then
     curl -sS https://getcomposer.org/installer | php -- --install-dir=/usr/local/bin --filename=composer > /dev/null
 fi
 
 # 5. Salin / Deploy Source Code ke /var/www/vpn-store
-echo -e "${GREEN}[4/7] Menyiapkan source code aplikasi di ${INSTALL_DIR}...${NC}"
+echo -e "${GREEN}[4/8] Menyiapkan source code aplikasi di ${INSTALL_DIR}...${NC}"
 mkdir -p "${INSTALL_DIR}"
 
 CURRENT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -100,7 +100,7 @@ fi
 cd "${INSTALL_DIR}"
 
 # 6. Setup Environment (.env) & Database
-echo -e "${GREEN}[5/7] Mengkonfigurasi environment dan migrasi database...${NC}"
+echo -e "${GREEN}[5/8] Mengkonfigurasi environment dan migrasi database...${NC}"
 if [ ! -f .env ]; then
     if [ -f .env.example ]; then
         cp .env.example .env
@@ -145,7 +145,7 @@ php artisan migrate --force --quiet
 php artisan db:seed --force --quiet
 
 # Set Permissions
-echo -e "${GREEN}[6/7] Mengatur izin akses direktori (permissions)...${NC}"
+echo -e "${GREEN}[6/8] Mengatur izin akses direktori (permissions)...${NC}"
 chown -R www-data:www-data "${INSTALL_DIR}"
 chmod -R 775 "${INSTALL_DIR}/storage"
 chmod -R 775 "${INSTALL_DIR}/bootstrap/cache"
@@ -153,7 +153,7 @@ chmod 664 "${INSTALL_DIR}/database/database.sqlite"
 chmod 775 "${INSTALL_DIR}/database"
 
 # 7. Konfigurasi Nginx Virtualhost
-echo -e "${GREEN}[7/7] Mengkonfigurasi Nginx Web Server...${NC}"
+echo -e "${GREEN}[7/8] Mengkonfigurasi Nginx Web Server...${NC}"
 NGINX_CONF="/etc/nginx/sites-available/vpn-store"
 
 cat <<EOF > "${NGINX_CONF}"
