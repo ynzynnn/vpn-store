@@ -88,24 +88,36 @@ fi
 
 # 5. Salin / Deploy Source Code ke /var/www/vpn-store
 echo -e "${GREEN}[4/8] Menyiapkan source code aplikasi di ${INSTALL_DIR}...${NC}"
-mkdir -p "${INSTALL_DIR}"
+export COMPOSER_ALLOW_SUPERUSER=1
 
 CURRENT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-# Jika skrip dijalankan dari dalam folder source project
-if [ -f "${CURRENT_DIR}/artisan" ]; then
+if [ -f "${CURRENT_DIR}/artisan" ] && [ -f "${CURRENT_DIR}/composer.json" ]; then
     echo -e "${BLUE}Menyalin file project dari direktori saat ini...${NC}"
-    cp -ru "${CURRENT_DIR}/." "${INSTALL_DIR}/"
+    mkdir -p "${INSTALL_DIR}"
+    cp -a "${CURRENT_DIR}/." "${INSTALL_DIR}/"
 else
     echo -e "${BLUE}Mengunduh source code dari GitHub (https://github.com/ynzynnn/vpn-store.git)...${NC}"
-    if [ -d "${INSTALL_DIR}/.git" ]; then
-        cd "${INSTALL_DIR}" && git pull origin main || true
-    else
-        git clone https://github.com/ynzynnn/vpn-store.git "${INSTALL_DIR}"
+    TMP_DIR="/tmp/vpn-store-clone-$$"
+    rm -rf "${TMP_DIR}"
+    git clone --depth 1 https://github.com/ynzynnn/vpn-store.git "${TMP_DIR}"
+
+    if [ ! -f "${TMP_DIR}/composer.json" ]; then
+        echo -e "${RED}[ERROR] Gagal mengunduh source code dari GitHub. Periksa koneksi internet VPS Anda.${NC}"
+        exit 1
     fi
+
+    mkdir -p "${INSTALL_DIR}"
+    cp -a "${TMP_DIR}/." "${INSTALL_DIR}/"
+    rm -rf "${TMP_DIR}"
 fi
 
 cd "${INSTALL_DIR}"
+
+if [ ! -f "${INSTALL_DIR}/composer.json" ]; then
+    echo -e "${RED}[ERROR] File composer.json tidak ditemukan di ${INSTALL_DIR}!${NC}"
+    exit 1
+fi
 
 # 6. Setup Environment (.env) & Database
 echo -e "${GREEN}[5/8] Mengkonfigurasi environment dan migrasi database...${NC}"
@@ -139,18 +151,18 @@ sed -i "s|APP_URL=.*|APP_URL=http://${DOMAIN}:${PORT}|g" .env
 sed -i "s|APP_DEBUG=.*|APP_DEBUG=false|g" .env
 
 # Install dependensi PHP (Production)
-composer install --no-dev --optimize-autoloader --no-interaction --quiet || composer install --no-interaction
+echo -e "${BLUE}Menginstall dependensi Composer...${NC}"
+composer install --no-dev --optimize-autoloader --no-interaction
 
-# Generate App Key jika kosong
-php artisan key:generate --force --quiet
-
-# Buat file database SQLite jika belum ada
 mkdir -p database
 touch database/database.sqlite
 
+# Generate App Key jika kosong
+php artisan key:generate --force
+
 # Migrasi dan Seeder
-php artisan migrate --force --quiet
-php artisan db:seed --force --quiet
+php artisan migrate --force
+php artisan db:seed --force
 
 # Set Permissions
 echo -e "${GREEN}[6/8] Mengatur izin akses direktori (permissions)...${NC}"

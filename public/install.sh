@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # ==============================================================================
-# ALL-IN-ONE AUTO INSTALLER VPN PORT STORE (DENGAN FITUR AUTO SSL LET'S ENCRYPT)
+# ALL-IN-ONE AUTO INSTALLER VPN PORT STORE
 # Mendukung: Ubuntu 20.04+, Debian 11+
 # ==============================================================================
 # Pilihan Menu:
-# 1. Install Web Panel (Nginx + PHP 8.3 + Database + Dashboard + Auto SSL)
+# 1. Install Web Panel (Nginx + PHP 8.3 + Database + Dashboard Kelola)
 # 2. Install Node VPS  (WireGuard + iptables Port Forwarding + Daemon Agent)
 # ==============================================================================
 
@@ -17,6 +17,7 @@ YELLOW='\033[1;33m'
 BOLD='\033[1m'
 NC='\033[0m'
 
+# Pastikan dijalankan sebagai root
 if [ "$EUID" -ne 0 ]; then
     echo -e "${RED}[ERROR] Script ini harus dijalankan sebagai root (sudo -i).${NC}"
     exit 1
@@ -24,6 +25,9 @@ fi
 
 SERVER_IP=$(curl -s -4 ifconfig.me || curl -s -4 icanhazip.com || hostname -I | awk '{print $1}')
 
+# ==============================================================================
+# FUNGSI 1: INSTALL WEB PANEL
+# ==============================================================================
 install_web_panel() {
     clear
     echo -e "${BLUE}${BOLD}"
@@ -41,6 +45,7 @@ install_web_panel() {
 
     ENABLE_SSL="n"
     SSL_EMAIL=""
+    # Cek jika input bukan berupa IP (mengandung huruf / nama domain)
     if [[ "$DOMAIN" =~ [a-zA-Z] ]]; then
         echo -e "\n${YELLOW}Domain terdeteksi: ${DOMAIN}${NC}"
         read -p "Aktifkan Auto SSL Gratis (HTTPS / Let's Encrypt)? [Y/n]: " SSL_CHOICE
@@ -81,23 +86,36 @@ install_web_panel() {
     fi
 
     echo -e "${GREEN}[4/8] Menyiapkan source code aplikasi di ${INSTALL_DIR}...${NC}"
-    mkdir -p "${INSTALL_DIR}"
+    export COMPOSER_ALLOW_SUPERUSER=1
 
     CURRENT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-    if [ -f "${CURRENT_DIR}/artisan" ]; then
+    if [ -f "${CURRENT_DIR}/artisan" ] && [ -f "${CURRENT_DIR}/composer.json" ]; then
         echo -e "${BLUE}Menyalin file project dari direktori saat ini...${NC}"
-        cp -ru "${CURRENT_DIR}/." "${INSTALL_DIR}/"
+        mkdir -p "${INSTALL_DIR}"
+        cp -a "${CURRENT_DIR}/." "${INSTALL_DIR}/"
     else
         echo -e "${BLUE}Mengunduh source code dari GitHub (https://github.com/ynzynnn/vpn-store.git)...${NC}"
-        if [ -d "${INSTALL_DIR}/.git" ]; then
-            cd "${INSTALL_DIR}" && git pull origin main || true
-        else
-            git clone https://github.com/ynzynnn/vpn-store.git "${INSTALL_DIR}"
+        TMP_DIR="/tmp/vpn-store-clone-$$"
+        rm -rf "${TMP_DIR}"
+        git clone --depth 1 https://github.com/ynzynnn/vpn-store.git "${TMP_DIR}"
+
+        if [ ! -f "${TMP_DIR}/composer.json" ]; then
+            echo -e "${RED}[ERROR] Gagal mengunduh source code dari GitHub. Periksa koneksi internet VPS Anda.${NC}"
+            exit 1
         fi
+
+        mkdir -p "${INSTALL_DIR}"
+        cp -a "${TMP_DIR}/." "${INSTALL_DIR}/"
+        rm -rf "${TMP_DIR}"
     fi
 
     cd "${INSTALL_DIR}"
+
+    if [ ! -f "${INSTALL_DIR}/composer.json" ]; then
+        echo -e "${RED}[ERROR] File composer.json tidak ditemukan di ${INSTALL_DIR}!${NC}"
+        exit 1
+    fi
 
     echo -e "${GREEN}[5/8] Mengkonfigurasi environment dan migrasi database...${NC}"
     if [ ! -f .env ]; then
@@ -128,15 +146,15 @@ EOF
     sed -i "s|APP_URL=.*|APP_URL=http://${DOMAIN}:${PORT}|g" .env
     sed -i "s|APP_DEBUG=.*|APP_DEBUG=false|g" .env
 
-    composer install --no-dev --optimize-autoloader --no-interaction --quiet || composer install --no-interaction
-
-    php artisan key:generate --force --quiet
+    echo -e "${BLUE}Menginstall dependensi Composer...${NC}"
+    composer install --no-dev --optimize-autoloader --no-interaction
 
     mkdir -p database
     touch database/database.sqlite
 
-    php artisan migrate --force --quiet
-    php artisan db:seed --force --quiet
+    php artisan key:generate --force
+    php artisan migrate --force
+    php artisan db:seed --force
 
     echo -e "${GREEN}[6/8] Mengatur izin akses direktori (permissions)...${NC}"
     chown -R www-data:www-data "${INSTALL_DIR}"
@@ -235,6 +253,9 @@ EOF
     echo ""
 }
 
+# ==============================================================================
+# FUNGSI 2: INSTALL NODE VPS
+# ==============================================================================
 install_node_vps() {
     clear
     echo -e "${BLUE}${BOLD}"
@@ -302,11 +323,76 @@ TOKEN="$2"
 while true; do
     MEM=$(free | awk '/Mem:/ {printf("%.2f"), $3/$2*100}')
     DISK=$(df -k / | awk 'NR==2 {print substr($5, 1, length($5)-1)}')
+    PEERS=$(wg show wg0 peers 2>/dev/null | wc -l)
 
+    # Kirim Heartbeat ke Panel dan terima aturan sync
     RESP=$(curl -s -X POST "${PANEL}/api/v1/agent/heartbeat" \
         -H "Content-Type: application/json" \
         -H "X-Agent-Token: ${TOKEN}" \
-        -d "{\"cpu_usage\": 5.0, \"memory_usage\": ${MEM}, \"disk_usage\": ${DISK}, \"active_peers\": 0}")
+        -d "{\"cpu_usage\": 5.0, \"memory_usage\": ${MEM:-0}, \"disk_usage\": ${DISK:-0}, \"active_peers\": ${PEERS:-0}}")
+
+    if [ -n "$RESP" ] && command -v jq &>/dev/null; then
+        # 1. Tambahkan / Update WireGuard Peers
+        echo "$RESP" | jq -c '.sync.peers_to_add[]?' 2>/dev/null | while read -r peer; do
+            [ -z "$peer" ] && continue
+            PUBKEY=$(echo "$peer" | jq -r '.public_key')
+            ALLOWED_IP=$(echo "$peer" | jq -r '.allowed_ip')
+            PSK=$(echo "$peer" | jq -r '.preshared_key // empty')
+            if [ -n "$PUBKEY" ] && [ "$PUBKEY" != "null" ] && [ -n "$ALLOWED_IP" ] && [ "$ALLOWED_IP" != "null" ]; then
+                if [ -n "$PSK" ]; then
+                    PSK_FILE=$(mktemp)
+                    echo "$PSK" > "$PSK_FILE"
+                    wg set wg0 peer "$PUBKEY" preshared-key "$PSK_FILE" allowed-ips "$ALLOWED_IP" 2>/dev/null
+                    rm -f "$PSK_FILE"
+                else
+                    wg set wg0 peer "$PUBKEY" allowed-ips "$ALLOWED_IP" 2>/dev/null
+                fi
+            fi
+        done
+
+        # 2. Hapus WireGuard Peers yang expired / dicabut
+        echo "$RESP" | jq -r '.sync.peers_to_remove[]?' 2>/dev/null | while read -r PUBKEY; do
+            if [ -n "$PUBKEY" ] && [ "$PUBKEY" != "null" ]; then
+                wg set wg0 peer "$PUBKEY" remove 2>/dev/null
+            fi
+        done
+
+        # 3. Terapkan Port Forwarding IPTables
+        echo "$RESP" | jq -c '.sync.ports_to_forward[]?' 2>/dev/null | while read -r port; do
+            [ -z "$port" ] && continue
+            PUB_PORT=$(echo "$port" | jq -r '.public_port')
+            TARGET_IP=$(echo "$port" | jq -r '.target_ip')
+            TARGET_PORT=$(echo "$port" | jq -r '.target_port')
+            PROTO=$(echo "$port" | jq -r '.protocol')
+
+            if [ -n "$PUB_PORT" ] && [ "$PUB_PORT" != "null" ] && [ -n "$TARGET_IP" ] && [ "$TARGET_IP" != "null" ]; then
+                for p in tcp udp; do
+                    if [ "$PROTO" = "both" ] || [ "$PROTO" = "$p" ]; then
+                        if ! iptables -t nat -C PREROUTING -p "$p" --dport "$PUB_PORT" -j DNAT --to-destination "${TARGET_IP}:${TARGET_PORT}" 2>/dev/null; then
+                            iptables -t nat -A PREROUTING -p "$p" --dport "$PUB_PORT" -j DNAT --to-destination "${TARGET_IP}:${TARGET_PORT}"
+                        fi
+                    fi
+                done
+            fi
+        done
+
+        # 4. Hapus Port Forwarding yang dicabut
+        echo "$RESP" | jq -c '.sync.ports_to_remove[]?' 2>/dev/null | while read -r port; do
+            [ -z "$port" ] && continue
+            PUB_PORT=$(echo "$port" | jq -r '.public_port')
+            TARGET_IP=$(echo "$port" | jq -r '.target_ip')
+            TARGET_PORT=$(echo "$port" | jq -r '.target_port')
+            PROTO=$(echo "$port" | jq -r '.protocol')
+
+            if [ -n "$PUB_PORT" ] && [ "$PUB_PORT" != "null" ] && [ -n "$TARGET_IP" ] && [ "$TARGET_IP" != "null" ]; then
+                for p in tcp udp; do
+                    if [ "$PROTO" = "both" ] || [ "$PROTO" = "$p" ]; then
+                        iptables -t nat -D PREROUTING -p "$p" --dport "$PUB_PORT" -j DNAT --to-destination "${TARGET_IP}:${TARGET_PORT}" 2>/dev/null || true
+                    fi
+                done
+            fi
+        done
+    fi
 
     sleep 15
 done
@@ -347,8 +433,13 @@ EOF
     echo -e "Public Key   : ${BOLD}${SERVER_PUB_KEY}${NC}"
     echo -e "IP Publik    : ${BOLD}${SERVER_IP}${NC}"
     echo ""
+    echo -e "${YELLOW}Node VPS Anda sekarang terhubung ke panel dan siap melakukan port forwarding!${NC}"
+    echo ""
 }
 
+# ==============================================================================
+# MENU UTAMA INTERAKTIF
+# ==============================================================================
 clear
 echo -e "${BLUE}${BOLD}"
 echo "=========================================================="
@@ -358,7 +449,7 @@ echo "=========================================================="
 echo -e "${NC}"
 echo -e "IP VPS Terdeteksi: ${BOLD}${SERVER_IP}${NC}\n"
 echo -e "Silakan pilih komponen yang ingin diinstall di VPS ini:"
-echo -e "  ${BOLD}[1]${NC} Install Web Panel (Nginx + PHP 8.3 + Database + Dashboard + Auto SSL)"
+echo -e "  ${BOLD}[1]${NC} Install Web Panel (Nginx + PHP 8.3 + Database + Dashboard)"
 echo -e "  ${BOLD}[2]${NC} Install Node VPS  (WireGuard + iptables Port Forwarding + Daemon Agent)"
 echo -e "  ${BOLD}[0]${NC} Batal / Keluar"
 echo ""
