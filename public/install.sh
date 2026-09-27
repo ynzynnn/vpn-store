@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # ==============================================================================
-# ALL-IN-ONE AUTO INSTALLER VPN PORT STORE
+# ALL-IN-ONE AUTO INSTALLER VPN PORT STORE (DENGAN FITUR AUTO SSL LET'S ENCRYPT)
 # Mendukung: Ubuntu 20.04+, Debian 11+
 # ==============================================================================
 # Pilihan Menu:
-# 1. Install Web Panel (Nginx + PHP 8.3 + Database + Dashboard Kelola)
+# 1. Install Web Panel (Nginx + PHP 8.3 + Database + Dashboard + Auto SSL)
 # 2. Install Node VPS  (WireGuard + iptables Port Forwarding + Daemon Agent)
 # ==============================================================================
 
@@ -39,13 +39,26 @@ install_web_panel() {
     read -p "Port Web Panel [Default: 80]: " PORT_INPUT
     PORT=${PORT_INPUT:-80}
 
+    ENABLE_SSL="n"
+    SSL_EMAIL=""
+    if [[ "$DOMAIN" =~ [a-zA-Z] ]]; then
+        echo -e "\n${YELLOW}Domain terdeteksi: ${DOMAIN}${NC}"
+        read -p "Aktifkan Auto SSL Gratis (HTTPS / Let's Encrypt)? [Y/n]: " SSL_CHOICE
+        SSL_CHOICE=${SSL_CHOICE:-Y}
+        if [[ "$SSL_CHOICE" =~ ^[Yy]$ ]]; then
+            ENABLE_SSL="y"
+            read -p "Masukkan Email untuk notifikasi SSL [Default: admin@${DOMAIN}]: " EMAIL_INPUT
+            SSL_EMAIL=${EMAIL_INPUT:-admin@${DOMAIN}}
+        fi
+    fi
+
     INSTALL_DIR="/var/www/vpn-store"
 
-    echo -e "\n${GREEN}[1/7] Mengupdate repository sistem & dependensi dasar...${NC}"
+    echo -e "\n${GREEN}[1/8] Mengupdate repository sistem & dependensi dasar...${NC}"
     apt-get update -qq
     apt-get install -y -qq curl wget git unzip ufw software-properties-common ca-certificates lsb-release
 
-    echo -e "${GREEN}[2/7] Menginstall Nginx, PHP 8.3 & Ekstensi pendukung...${NC}"
+    echo -e "${GREEN}[2/8] Menginstall Nginx, PHP 8.3 & Ekstensi pendukung...${NC}"
     OS_NAME=$(lsb_release -is | tr '[:upper:]' '[:lower:]')
 
     if [ "$OS_NAME" = "ubuntu" ]; then
@@ -62,12 +75,12 @@ install_web_panel() {
         php8.3-curl php8.3-mbstring php8.3-xml php8.3-zip php8.3-bcmath \
         php8.3-intl php8.3-sodium
 
-    echo -e "${GREEN}[3/7] Memasang Composer...${NC}"
+    echo -e "${GREEN}[3/8] Memasang Composer...${NC}"
     if ! command -v composer &> /dev/null; then
         curl -sS https://getcomposer.org/installer | php -- --install-dir=/usr/local/bin --filename=composer > /dev/null
     fi
 
-    echo -e "${GREEN}[4/7] Menyiapkan source code aplikasi di ${INSTALL_DIR}...${NC}"
+    echo -e "${GREEN}[4/8] Menyiapkan source code aplikasi di ${INSTALL_DIR}...${NC}"
     mkdir -p "${INSTALL_DIR}"
 
     CURRENT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -78,7 +91,7 @@ install_web_panel() {
 
     cd "${INSTALL_DIR}"
 
-    echo -e "${GREEN}[5/7] Mengkonfigurasi environment dan migrasi database...${NC}"
+    echo -e "${GREEN}[5/8] Mengkonfigurasi environment dan migrasi database...${NC}"
     if [ ! -f .env ]; then
         if [ -f .env.example ]; then
             cp .env.example .env
@@ -117,14 +130,14 @@ EOF
     php artisan migrate --force --quiet
     php artisan db:seed --force --quiet
 
-    echo -e "${GREEN}[6/7] Mengatur izin akses direktori (permissions)...${NC}"
+    echo -e "${GREEN}[6/8] Mengatur izin akses direktori (permissions)...${NC}"
     chown -R www-data:www-data "${INSTALL_DIR}"
     chmod -R 775 "${INSTALL_DIR}/storage"
     chmod -R 775 "${INSTALL_DIR}/bootstrap/cache"
     chmod 664 "${INSTALL_DIR}/database/database.sqlite"
     chmod 775 "${INSTALL_DIR}/database"
 
-    echo -e "${GREEN}[7/7] Mengkonfigurasi Nginx Web Server...${NC}"
+    echo -e "${GREEN}[7/8] Mengkonfigurasi Nginx Web Server...${NC}"
     NGINX_CONF="/etc/nginx/sites-available/vpn-store"
 
     cat <<EOF > "${NGINX_CONF}"
@@ -174,13 +187,41 @@ EOF
         ufw allow ${PORT}/tcp > /dev/null
     fi
 
+    # 8. Pasang Auto SSL Let's Encrypt (Certbot) jika diminta
+    SCHEME="http"
+    FINAL_PORT=":${PORT}"
+    if [ "$PORT" = "80" ]; then
+        FINAL_PORT=""
+    fi
+
+    if [ "$ENABLE_SSL" = "y" ]; then
+        echo -e "${GREEN}[8/8] Memasang Auto SSL Let's Encrypt (Certbot)...${NC}"
+        apt-get install -y -qq certbot python3-certbot-nginx
+
+        if ufw status | grep -qw "active"; then
+            ufw allow 443/tcp > /dev/null
+        fi
+
+        echo -e "${BLUE}Menghubungi Let's Encrypt untuk menerbitkan sertifikat SSL...${NC}"
+        if certbot --nginx -d "${DOMAIN}" --non-interactive --agree-tos -m "${SSL_EMAIL}" --redirect; then
+            SCHEME="https"
+            FINAL_PORT=""
+            sed -i "s|APP_URL=.*|APP_URL=https://${DOMAIN}|g" "${INSTALL_DIR}/.env"
+            systemctl restart nginx
+            echo -e "${GREEN}[OK] Sertifikat SSL berhasil dipasang & redirect HTTPS aktif!${NC}"
+        else
+            echo -e "${YELLOW}[PERINGATAN] Penerbitan SSL gagal. Pastikan DNS A record domain sudah mengarah ke IP VPS ini.${NC}"
+            echo -e "${YELLOW}Panel tetap dapat diakses melalui HTTP.${NC}"
+        fi
+    fi
+
     echo -e "\n${GREEN}${BOLD}"
     echo "=========================================================="
     echo "    [SUKSES] WEB PANEL BERHASIL DIINSTALL!                "
     echo "=========================================================="
     echo -e "${NC}"
-    echo -e "Alamat Akses Panel : ${BOLD}http://${DOMAIN}:${PORT}${NC}"
-    echo -e "Dashboard Kelola   : ${BOLD}http://${DOMAIN}:${PORT}/dashboard${NC}"
+    echo -e "Alamat Akses Panel : ${BOLD}${SCHEME}://${DOMAIN}${FINAL_PORT}${NC}"
+    echo -e "Dashboard Kelola   : ${BOLD}${SCHEME}://${DOMAIN}${FINAL_PORT}/dashboard${NC}"
     echo -e "Email Login Admin  : ${BOLD}admin@vpnstore.com${NC}"
     echo -e "Password Admin     : ${BOLD}password123${NC}"
     echo ""
@@ -309,7 +350,7 @@ echo "=========================================================="
 echo -e "${NC}"
 echo -e "IP VPS Terdeteksi: ${BOLD}${SERVER_IP}${NC}\n"
 echo -e "Silakan pilih komponen yang ingin diinstall di VPS ini:"
-echo -e "  ${BOLD}[1]${NC} Install Web Panel (Nginx + PHP 8.3 + Database + Dashboard)"
+echo -e "  ${BOLD}[1]${NC} Install Web Panel (Nginx + PHP 8.3 + Database + Dashboard + Auto SSL)"
 echo -e "  ${BOLD}[2]${NC} Install Node VPS  (WireGuard + iptables Port Forwarding + Daemon Agent)"
 echo -e "  ${BOLD}[0]${NC} Batal / Keluar"
 echo ""

@@ -43,9 +43,22 @@ DOMAIN=${DOMAIN_INPUT:-$SERVER_IP}
 read -p "Port Web Panel [Default: 80]: " PORT_INPUT
 PORT=${PORT_INPUT:-80}
 
+ENABLE_SSL="n"
+SSL_EMAIL=""
+if [[ "$DOMAIN" =~ [a-zA-Z] ]]; then
+    echo -e "\n${YELLOW}Domain terdeteksi: ${DOMAIN}${NC}"
+    read -p "Aktifkan Auto SSL Gratis (HTTPS / Let's Encrypt)? [Y/n]: " SSL_CHOICE
+    SSL_CHOICE=${SSL_CHOICE:-Y}
+    if [[ "$SSL_CHOICE" =~ ^[Yy]$ ]]; then
+        ENABLE_SSL="y"
+        read -p "Masukkan Email untuk notifikasi SSL [Default: admin@${DOMAIN}]: " EMAIL_INPUT
+        SSL_EMAIL=${EMAIL_INPUT:-admin@${DOMAIN}}
+    fi
+fi
+
 INSTALL_DIR="/var/www/vpn-store"
 
-echo -e "\n${GREEN}[1/7] Mengupdate repository sistem & dependensi dasar...${NC}"
+echo -e "\n${GREEN}[1/8] Mengupdate repository sistem & dependensi dasar...${NC}"
 apt-get update -qq
 apt-get install -y -qq curl wget git unzip ufw software-properties-common ca-certificates lsb-release
 
@@ -196,13 +209,40 @@ if ufw status | grep -qw "active"; then
     ufw allow 51820/udp > /dev/null
 fi
 
+SCHEME="http"
+FINAL_PORT=":${PORT}"
+if [ "$PORT" = "80" ]; then
+    FINAL_PORT=""
+fi
+
+if [ "$ENABLE_SSL" = "y" ]; then
+    echo -e "${GREEN}[8/8] Memasang Auto SSL Let's Encrypt (Certbot)...${NC}"
+    apt-get install -y -qq certbot python3-certbot-nginx
+
+    if ufw status | grep -qw "active"; then
+        ufw allow 443/tcp > /dev/null
+    fi
+
+    echo -e "${BLUE}Menghubungi Let's Encrypt untuk menerbitkan sertifikat SSL...${NC}"
+    if certbot --nginx -d "${DOMAIN}" --non-interactive --agree-tos -m "${SSL_EMAIL}" --redirect; then
+        SCHEME="https"
+        FINAL_PORT=""
+        sed -i "s|APP_URL=.*|APP_URL=https://${DOMAIN}|g" "${INSTALL_DIR}/.env"
+        systemctl restart nginx
+        echo -e "${GREEN}[OK] Sertifikat SSL berhasil dipasang & redirect HTTPS aktif!${NC}"
+    else
+        echo -e "${YELLOW}[PERINGATAN] Penerbitan SSL gagal. Pastikan DNS A record domain sudah mengarah ke IP VPS ini.${NC}"
+        echo -e "${YELLOW}Panel tetap dapat diakses melalui HTTP.${NC}"
+    fi
+fi
+
 echo -e "\n${GREEN}${BOLD}"
 echo "=========================================================="
 echo "    INSTALASI SELESAI & WEB PANEL SIAP DIGUNAKAN!         "
 echo "=========================================================="
 echo -e "${NC}"
-echo -e "Alamat Akses Panel : ${BOLD}http://${DOMAIN}:${PORT}${NC}"
-echo -e "Dashboard Kelola   : ${BOLD}http://${DOMAIN}:${PORT}/dashboard${NC}"
+echo -e "Alamat Akses Panel : ${BOLD}${SCHEME}://${DOMAIN}${FINAL_PORT}${NC}"
+echo -e "Dashboard Kelola   : ${BOLD}${SCHEME}://${DOMAIN}${FINAL_PORT}/dashboard${NC}"
 echo -e "Email Login Admin  : ${BOLD}admin@vpnstore.com${NC}"
 echo -e "Password Admin     : ${BOLD}password123${NC}"
 echo ""

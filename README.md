@@ -23,7 +23,7 @@ Silakan pilih komponen yang ingin diinstall di VPS ini:
   [0] Batal / Keluar
 ```
 
-- **Pilih `1`**: Untuk VPS yang akan dijadikan **Master Web Panel** (otomatis install Nginx, PHP 8.3, Composer, Database SQLite, App Key, dan Virtualhost).
+- **Pilih `1`**: Untuk VPS yang akan dijadikan **Master Web Panel** (otomatis install Nginx, PHP 8.3, Composer, Database SQLite, App Key, Virtualhost, serta opsi **Auto SSL Gratis Let's Encrypt / HTTPS** jika menggunakan domain).
 - **Pilih `2`**: Untuk VPS yang akan dijadikan **Node Port Forwarding** (otomatis install WireGuard, aktifkan `net.ipv4.ip_forward`, iptables NAT, dan memasang daemon agent service).
 
 ---
